@@ -8,11 +8,13 @@ plan2explore orginal/tensorflow copied from commit [59fa82f](https://github.com/
 
 plan2explore-pytorch from commit [13c13bd](https://github.com/yusukeurakami/plan2explore-pytorch/commit/13c13bd6c206742fd25d68ab693a5b5271b5b34a)
 
+[marathon-envs](https://github.com/Unity-Technologies/marathon-envs) from release [v3.0.0](https://github.com/Unity-Technologies/marathon-envs/releases/tag/v3.0.0)
+
 
 
 ### Setup
 
-1. Install conda environment
+1. Install conda environment:
 
 ```
 conda env create -f environment.yml
