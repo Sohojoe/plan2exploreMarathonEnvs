@@ -11,8 +11,19 @@ plan2explore-pytorch from commit [13c13bd](https://github.com/yusukeurakami/plan
 [marathon-envs](https://github.com/Unity-Technologies/marathon-envs) from release [v3.0.0](https://github.com/Unity-Technologies/marathon-envs/releases/tag/v3.0.0)
 
 
+## Training (e.g. DMC walker-walk zero-shot)
 
-### Setup
+Zero-shot
+```bash
+python main.py --algo p2e --env walker-walk --id name-of-experiement --zero-shot
+```
+
+Few-shot
+```bash
+python main.py --algo p2e --env walker-walk --id name-of-experiement
+```
+
+## Setup
 
 1. Install conda environment:
 
@@ -28,4 +39,11 @@ cd ..
 ```
 
 2. copy marathon-envs executable from [here](https://github.com/Unity-Technologies/marathon-envs/releases/tag/v3.0.0) to envs\
+
+## mac issues
+see [Gym on Mac OS X Big Sur](https://github.com/openai/gym/issues/2101)
+
+```
+pip install pyglet==1.5.11
+```
 

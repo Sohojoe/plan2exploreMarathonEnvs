@@ -6,6 +6,7 @@ channels:
 dependencies:
   - plotly
   - pytorch
+  - torchvision
   - tqdm
   - numpy
   - python=3.8
@@ -13,3 +14,7 @@ dependencies:
   - pip:
     - gym
     - opencv-python
+    - tensorboardx
+    - pyopengl
+    - pyglet==1.5.11
+
