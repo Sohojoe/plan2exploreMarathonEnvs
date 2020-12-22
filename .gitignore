@@ -1,7 +1,7 @@
 
 
 
-envs
-results
+/envs
+/results
 __pycache__
-marathon-envs/marathon_envs.egg-info
+/marathon-envs/marathon_envs.egg-info

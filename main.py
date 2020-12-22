@@ -33,7 +33,7 @@ parser.add_argument('--embedding-size', type=int, default=1024, metavar='E', hel
 parser.add_argument('--hidden-size', type=int, default=400, metavar='H', help='Hidden size')
 parser.add_argument('--belief-size', type=int, default=400, metavar='H', help='Belief/hidden size')
 parser.add_argument('--state-size', type=int, default=60, metavar='Z', help='State/latent size')
-parser.add_argument('--action-repeat', type=int, default=2, metavar='R', help='Action repeat')
+parser.add_argument('--action-repeat', type=int, default=1, metavar='R', help='Action repeat')
 parser.add_argument('--action-noise', type=float, default=0.3, metavar='ε', help='Action noise')
 parser.add_argument('--episodes', type=int, default=3000, metavar='E', help='Total number of episodes')
 parser.add_argument('--seed-episodes', type=int, default=5, metavar='S', help='Seed episodes')
