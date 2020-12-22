@@ -75,13 +75,13 @@ class MarathonEnvs(gym.Env):
         elif marathon_envs_path is None:
             marathon_envs_path = os.path.join('envs', 'MarathonEnvs')
             if platform == "win32":
-                marathon_envs_path = os.path.join(marathon_envs_path, 'Unity Environment.exe')
+                marathon_envs_path = os.path.join(marathon_envs_path, 'Marathon Environments.exe')
         args = ['--spawn-env='+environment_name]
         args.append('--num-spawn-envs='+str(num_spawn_envs))
 
         engine_configuration_channel = EngineConfigurationChannel()
         channels = [engine_configuration_channel]
-
+        print("path", marathon_envs_path)
         self._env = UnityEnvironment(
             marathon_envs_path,
             worker_id = worker_id,
