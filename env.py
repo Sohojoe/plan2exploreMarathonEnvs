@@ -7,9 +7,6 @@ from marathon_envs.envs import MarathonEnvs
 # GYM_ENVS = ['Pendulum-v0', 'MountainCarContinuous-v0', 'Ant-v2', 'HalfCheetah-v2', 'Hopper-v2', 'Humanoid-v2', 'HumanoidStandup-v2', 'InvertedDoublePendulum-v2', 'InvertedPendulum-v2', 'Reacher-v2', 'Swimmer-v2', 'Walker2d-v2']
 GYM_ENVS = ['Pendulum-v0', 'MountainCarContinuous-v0']
 MARATHON_ENVS = ['Hopper-v0', 'Walker2d-v0', 'Ant-v0', 'MarathonMan-v0', 'MarathonManSparse-v0']
-# CONTROL_SUITE_ENVS = ['cartpole-balance', 'cartpole-swingup', 'reacher-easy', 'finger-spin', 'cheetah-run', 'ball_in_cup-catch', 'walker-walk','reacher-hard', 'walker-run', 'humanoid-stand', 'humanoid-walk', 'fish-swim', 'acrobot-swingup']
-# CONTROL_SUITE_ACTION_REPEATS = {'cartpole': 8, 'reacher': 4, 'finger': 2, 'cheetah': 4, 'ball_in_cup': 6, 'walker': 2, 'humanoid': 2, 'fish': 2, 'acrobot':4}
-
 
 # Preprocesses an observation inplace (from float32 Tensor [0, 255] to [-0.5, 0.5])
 def preprocess_observation_(observation, bit_depth):
@@ -28,44 +25,50 @@ def _images_to_observation(images, bit_depth):
   return images.unsqueeze(dim=0)  # Add batch dimension
 
 
-class ControlSuiteEnv():
+class WrappedMarathonEnv():
   def __init__(self, env, symbolic, seed, max_episode_length, action_repeat, bit_depth):
-    from dm_control import suite
-    from dm_control.suite.wrappers import pixels
-    domain, task = env.split('-')
+    from marathon_envs.envs import MarathonEnvs
+    # domain, task = env.split('-')
     self.symbolic = symbolic
-    self._env = suite.load(domain_name=domain, task_name=task, task_kwargs={'random': seed})
+    assert (symbolic), "symbolic should be True, all marathon envs are symbolic"
+    # self._env = suite.load(domain_name=domain, task_name=task, task_kwargs={'random': seed})
+    self._env = MarathonEnvs(env, 1)
     if not symbolic:
       self._env = pixels.Wrapper(self._env)
     self.max_episode_length = max_episode_length
-    self.action_repeat = action_repeat
-    if action_repeat != CONTROL_SUITE_ACTION_REPEATS[domain]:
-      print('Using action repeat %d; recommended action repeat for domain is %d' % (action_repeat, CONTROL_SUITE_ACTION_REPEATS[domain]))
+    # self.action_repeat = action_repeat
+    self.action_repeat = 1
+    # if action_repeat != CONTROL_SUITE_ACTION_REPEATS[domain]:
+    #   print('Using action repeat %d; recommended action repeat for domain is %d' % (action_repeat, CONTROL_SUITE_ACTION_REPEATS[domain]))
     self.bit_depth = bit_depth
 
   def reset(self):
     self.t = 0  # Reset internal timer
-    state = self._env.reset()
+    observations = self._env.reset()
     if self.symbolic:
-      return torch.tensor(np.concatenate([np.asarray([obs]) if isinstance(obs, float) else obs for obs in state.observation.values()], axis=0), dtype=torch.float32).unsqueeze(dim=0)
+      # observations = np.concatenate(observations)
+      observations = torch.tensor(observations)
     else:
-      return _images_to_observation(self._env.physics.render(camera_id=0), self.bit_depth)
+      observations = _images_to_observation(self._env.physics.render(camera_id=0), self.bit_depth)
+    return observations
 
   def step(self, action):
     action = action.detach().numpy()
+    # action = np.reshape(action, (1,-1))
     reward = 0
     for k in range(self.action_repeat):
-      state = self._env.step(action)
-      reward += state.reward
+      observations, r, d, info = self._env.step(action)
+      reward += r
       self.t += 1  # Increment internal timer
-      done = state.last() or self.t == self.max_episode_length
+      done = d or self.t == self.max_episode_length
       if done:
         break
     if self.symbolic:
-      observation = torch.tensor(np.concatenate([np.asarray([obs]) if isinstance(obs, float) else obs for obs in state.observation.values()], axis=0), dtype=torch.float32).unsqueeze(dim=0)
+      # observations = np.concatenate(observations)
+      observations = torch.tensor(observations)
     else:
-      observation = _images_to_observation(self._env.physics.render(camera_id=0), self.bit_depth)
-    return observation, reward, done
+      observations = _images_to_observation(self._env.physics.render(camera_id=0), self.bit_depth)
+    return observations, reward, done
 
   def render(self):
     cv2.imshow('screen', self._env.physics.render(camera_id=0)[:, :, ::-1])
@@ -77,18 +80,22 @@ class ControlSuiteEnv():
 
   @property
   def observation_size(self):
-    return sum([(1 if len(obs.shape) == 0 else obs.shape[0]) for obs in self._env.observation_spec().values()]) if self.symbolic else (3, 64, 64)
+    return self._env.observation_space.shape[0] if self.symbolic else (3, 64, 64)
 
   @property
   def action_size(self):
-    return self._env.action_spec().shape[0]
+    return self._env.action_space.shape[0]
+
+  @property 
+  def number_agents(self):
+    return self._env.number_agents
 
   # Sample an action randomly from a uniform distribution over all valid actions
   def sample_random_action(self):
-    spec = self._env.action_spec()
-    return torch.from_numpy(np.random.uniform(spec.minimum, spec.maximum, spec.shape))
-
-
+    sample = [self._env.action_space.sample() for _ in range(self._env.number_agents)]
+    sample = np.array(sample)
+    sample = torch.from_numpy(sample)
+    return sample
 
 class GymEnv():
   def __init__(self, env, symbolic, seed, max_episode_length, action_repeat, bit_depth):
@@ -146,9 +153,8 @@ class GymEnv():
 def Env(env, symbolic, seed, max_episode_length, action_repeat, bit_depth):
   if env in GYM_ENVS:
     return GymEnv(env, symbolic, seed, max_episode_length, action_repeat, bit_depth)
-  elif env in CONTROL_SUITE_ENVS:
-    return ControlSuiteEnv(env, symbolic, seed, max_episode_length, action_repeat, bit_depth)
-
+  elif env in MARATHON_ENVS:
+    return WrappedMarathonEnv(env, symbolic, seed, max_episode_length, action_repeat, bit_depth)
 
 # Wrapper for batching environments together
 class EnvBatcher():

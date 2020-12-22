@@ -80,7 +80,7 @@ class TransitionModel(jit.ScriptModule):
     return hidden
 
 class OneStepModel(jit.ScriptModule):
-  def __init__(self, state_size, action_size, embedding_size, activation_function='relu', model_width_factor=1):
+  def __init__(self, state_size, action_size, embedding_size, activation_function='relu', model_width_factor=1, device='cpu'):
     super().__init__()
     self.act_fn = getattr(F, activation_function)
     self.embedding_size = embedding_size
@@ -89,6 +89,7 @@ class OneStepModel(jit.ScriptModule):
     self.fc2 = nn.Linear(self.hidden_size + action_size, self.hidden_size)
     self.fc3 = nn.Linear(self.hidden_size + action_size, embedding_size)
     self.modules = [self.fc1, self.fc2, self.fc3]
+    self.device = device
 
   def __call__(self, prev_state, prev_action):
     prev_state = prev_state.detach()
@@ -99,7 +100,7 @@ class OneStepModel(jit.ScriptModule):
     hidden = self.act_fn(self.fc2(hidden))
     hidden = torch.cat([hidden, prev_action], dim=-1) 
     mean = self.fc3(hidden)
-    dist = Normal(mean, torch.zeros_like(mean).to('cuda'))
+    dist = Normal(mean, torch.zeros_like(mean).to(self.device))
     dist = torch.distributions.Independent(dist, 1)
     return dist
 

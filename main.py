@@ -8,7 +8,7 @@ from torch.distributions.kl import kl_divergence
 from torch.nn import functional as F
 from torchvision.utils import make_grid, save_image
 from tqdm import tqdm
-from env import MARATHON_ENVS, Env, GYM_ENVS, EnvBatcher
+from env import MARATHON_ENVS, Env, GYM_ENVS, EnvBatcher, WrappedMarathonEnv
 from memory import ExperienceReplay
 from models import bottle, Encoder, ObservationModel, RewardModel, TransitionModel, ValueModel, ActorModel, OneStepModel
 from planner import MPCPlanner
@@ -22,8 +22,9 @@ parser.add_argument('--algo', type=str, default='p2e', help='planet, dreamer or 
 parser.add_argument('--id', type=str, default='default', help='Experiment ID')
 parser.add_argument('--seed', type=int, default=1, metavar='S', help='Random seed')
 parser.add_argument('--disable-cuda', action='store_true', help='Disable CUDA')
-parser.add_argument('--env', type=str, default='Pendulum-v0', choices=GYM_ENVS + MARATHON_ENVS, help='Gym/Control Suite environment')
-parser.add_argument('--symbolic-env', action='store_true', help='Symbolic features')
+# parser.add_argument('--env', type=str, default='Pendulum-v0', choices=GYM_ENVS + MARATHON_ENVS, help='Gym/Control Suite environment')
+parser.add_argument('--env', type=str, default='Hopper-v0', choices=GYM_ENVS + MARATHON_ENVS, help='Gym/Control Suite environment')
+parser.add_argument('--symbolic-env', action='store_true', default=True, help='Symbolic features')
 parser.add_argument('--max-episode-length', type=int, default=1000, metavar='T', help='Max episode length')
 parser.add_argument('--experience-size', type=int, default=1000000, metavar='D', help='Experience replay size')  # Original implementation has an unlimited buffer size, but 1 million is the max experience collected anyway
 parser.add_argument('--cnn-activation-function', type=str, default='relu', choices=dir(F), help='Model activation function for a convolution layer')
@@ -105,6 +106,7 @@ writer = SummaryWriter(summary_name.format(args.env, args.id))
 
 # Initialise training environment and experience replay memory
 env = Env(args.env, args.symbolic_env, args.seed, args.max_episode_length, args.action_repeat, args.bit_depth)
+
 if args.experience_replay is not '' and os.path.exists(args.experience_replay):
   D = torch.load(args.experience_replay)
   metrics['steps'], metrics['episodes'] = [D.steps] * D.episodes, list(range(1, D.episodes + 1))
@@ -137,7 +139,7 @@ if args.algo=="dreamer" or args.algo=="p2e":
 if args.algo=="p2e":
   curious_actor_model = ActorModel(args.belief_size, args.state_size, args.hidden_size, env.action_size, args.dense_activation_function).to(device=args.device)
   curious_value_model = ValueModel(args.belief_size, args.state_size, args.hidden_size, args.dense_activation_function).to(device=args.device)
-  onestep_models = [OneStepModel(args.belief_size, env.action_size, args.embedding_size, args.onestep_activation_function).to(device=args.device) for _ in range(args.onestep_num)]
+  onestep_models = [OneStepModel(args.belief_size, env.action_size, args.embedding_size, args.onestep_activation_function, device=args.device).to(device=args.device) for _ in range(args.onestep_num)]
   onestep_param_list = []
   for x in onestep_models: onestep_param_list += list(x.parameters())
   onestep_modules = []
@@ -187,7 +189,7 @@ def update_belief_and_act(args, env, planner, transition_model, encoder, belief,
     action = planner(belief, posterior_state)  # Get action from planner(q(s_t|o≤t,a<t), p)
   if explore:
     action = torch.clamp(Normal(action, args.action_noise).rsample(), -1, 1) # Add gaussian exploration noise on top of the sampled action
-  next_observation, reward, done = env.step(action.cpu() if isinstance(env, EnvBatcher) else action[0].cpu())  # Perform environment step (action repeats handled internally)
+  next_observation, reward, done = env.step(action.cpu() if isinstance(env, EnvBatcher) or isinstance(env, WrappedMarathonEnv) else action[0].cpu())  # Perform environment step (action repeats handled internally)
   return belief, posterior_state, action, next_observation, reward, done
 
 
@@ -202,7 +204,7 @@ if args.test:
     total_reward = 0
     for _ in tqdm(range(args.test_episodes)):
       observation = env.reset()
-      belief, posterior_state, action = torch.zeros(1, args.belief_size, device=args.device), torch.zeros(1, args.state_size, device=args.device), torch.zeros(1, env.action_size, device=args.device)
+      belief, posterior_state, action = torch.zeros(env.number_agents, args.belief_size, device=args.device), torch.zeros(env.number_agents, args.state_size, device=args.device), torch.zeros(env.number_agents, env.action_size, device=args.device)
       pbar = tqdm(range(args.max_episode_length // args.action_repeat))
       for t in pbar:
         belief, posterior_state, action, observation, reward, done = update_belief_and_act(args, env, planner, transition_model, encoder, belief, posterior_state, action, observation.to(device=args.device))
@@ -230,13 +232,16 @@ for episode in tqdm(range(metrics['episodes'][-1] + 1, args.episodes + 1), total
     # Create initial belief and state for time t = 0
     init_belief, init_state = torch.zeros(args.batch_size, args.belief_size, device=args.device), torch.zeros(args.batch_size, args.state_size, device=args.device)
     # Update belief/state using posterior from previous belief/state, previous action and current observation (over entire sequence at once)
-    beliefs, prior_states, prior_means, prior_std_devs, posterior_states, posterior_means, posterior_std_devs = transition_model(init_state, actions[:-1], init_belief, bottle(encoder, (observations[1:], )), nonterminals[:-1])
+    # beliefs, prior_states, prior_means, prior_std_devs, posterior_states, posterior_means, posterior_std_devs = transition_model(init_state, actions[:-1], init_belief, bottle(encoder, (observations[1:], )), nonterminals[:-1])
+    beliefs, prior_states, prior_means, prior_std_devs, posterior_states, posterior_means, posterior_std_devs = transition_model(init_state, actions, init_belief, bottle(encoder, (observations, )), nonterminals)
     # Calculate observation likelihood, reward likelihood and KL losses (for t = 0 only for latent overshooting); sum over final dims, average over batch and time (original implementation, though paper seems to miss 1/T scaling?)
     if args.worldmodel_MSEloss:
-      observation_loss = F.mse_loss(bottle(observation_model, (beliefs, posterior_states)), observations[1:], reduction='none').sum(dim=2 if args.symbolic_env else (2, 3, 4)).mean(dim=(0, 1))
+      # observation_loss = F.mse_loss(bottle(observation_model, (beliefs, posterior_states)), observations[1:], reduction='none').sum(dim=2 if args.symbolic_env else (2, 3, 4)).mean(dim=(0, 1))
+      observation_loss = F.mse_loss(bottle(observation_model, (beliefs, posterior_states)), observations, reduction='none').sum(dim=2 if args.symbolic_env else (2, 3, 4)).mean(dim=(0, 1))
     else:
       observation_dist = Normal(bottle(observation_model, (beliefs, posterior_states)), 1)
-      observation_loss = -observation_dist.log_prob(observations[1:]).sum(dim=2 if args.symbolic_env else (2, 3, 4)).mean(dim=(0, 1))
+      # observation_loss = -observation_dist.log_prob(observations[1:]).sum(dim=2 if args.symbolic_env else (2, 3, 4)).mean(dim=(0, 1))
+      observation_loss = -observation_dist.log_prob(observations).sum(dim=2 if args.symbolic_env else (2, 3, 4)).mean(dim=(0, 1))
     if args.algo == "p2e":
       if args.zero_shot:
         reward_dist = Normal(bottle(reward_model, (beliefs.detach(), posterior_states)),1)
@@ -245,13 +250,16 @@ for episode in tqdm(range(metrics['episodes'][-1] + 1, args.episodes + 1), total
           reward_dist = Normal(bottle(reward_model, (beliefs, posterior_states)),1)
         else:
           reward_dist = Normal(bottle(reward_model, (beliefs.detach(), posterior_states)),1)
-      reward_loss = -reward_dist.log_prob(rewards[:-1]).mean(dim=(0, 1))
+      # reward_loss = -reward_dist.log_prob(rewards[:-1]).mean(dim=(0, 1))
+      reward_loss = -reward_dist.log_prob(rewards).mean(dim=(0, 1))
     else:
       if args.worldmodel_MSEloss:
-        reward_loss = F.mse_loss(bottle(reward_model, (beliefs, posterior_states)), rewards[:-1], reduction='none').mean(dim=(0,1))
+        # reward_loss = F.mse_loss(bottle(reward_model, (beliefs, posterior_states)), rewards[:-1], reduction='none').mean(dim=(0,1))
+        reward_loss = F.mse_loss(bottle(reward_model, (beliefs, posterior_states)), rewards, reduction='none').mean(dim=(0,1))
       else:
         reward_dist = Normal(bottle(reward_model, (beliefs, posterior_states)),1)
-        reward_loss = -reward_dist.log_prob(rewards[:-1]).mean(dim=(0, 1))
+        # reward_loss = -reward_dist.log_prob(rewards[:-1]).mean(dim=(0, 1))
+        reward_loss = -reward_dist.log_prob(rewards).mean(dim=(0, 1))
     # transition loss
     div = kl_divergence(Normal(posterior_means, posterior_std_devs), Normal(prior_means, prior_std_devs)).sum(dim=2)
     kl_loss = torch.max(div, free_nats).mean(dim=(0, 1))  # Note that normalisation by overshooting distance and weighting by overshooting distance cancel out
@@ -433,7 +441,7 @@ for episode in tqdm(range(metrics['episodes'][-1] + 1, args.episodes + 1), total
 
   with torch.no_grad():
     observation, total_reward = env.reset(), 0
-    belief, posterior_state, action = torch.zeros(1, args.belief_size, device=args.device), torch.zeros(1, args.state_size, device=args.device), torch.zeros(1, env.action_size, device=args.device)
+    belief, posterior_state, action = torch.zeros(env.number_agents, args.belief_size, device=args.device), torch.zeros(env.number_agents, args.state_size, device=args.device), torch.zeros(env.number_agents, env.action_size, device=args.device)
     pbar = tqdm(range(args.max_episode_length // args.action_repeat))
     for t in pbar:
       # print("step",t)

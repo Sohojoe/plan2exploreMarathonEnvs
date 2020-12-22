@@ -1,4 +1,4 @@
-name: p2e
+name: p2e2
 channels:
   - pytorch
   - defaults
