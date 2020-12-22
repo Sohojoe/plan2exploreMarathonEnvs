@@ -7,7 +7,7 @@ from torch.distributions import Normal
 from torch.distributions.kl import kl_divergence
 from torch.nn import functional as F
 from torchvision.utils import make_grid, save_image
-from tqdm import tqdm
+from tqdm import tqdm, trange
 from env import MARATHON_ENVS, Env, GYM_ENVS, EnvBatcher, WrappedMarathonEnv
 from memory import ExperienceReplay
 from models import bottle, Encoder, ObservationModel, RewardModel, TransitionModel, ValueModel, ActorModel, OneStepModel
@@ -33,7 +33,7 @@ parser.add_argument('--embedding-size', type=int, default=1024, metavar='E', hel
 parser.add_argument('--hidden-size', type=int, default=400, metavar='H', help='Hidden size')
 parser.add_argument('--belief-size', type=int, default=400, metavar='H', help='Belief/hidden size')
 parser.add_argument('--state-size', type=int, default=60, metavar='Z', help='State/latent size')
-parser.add_argument('--action-repeat', type=int, default=1, metavar='R', help='Action repeat')
+parser.add_argument('--action-repeat', type=int, default=2, metavar='R', help='Action repeat')
 parser.add_argument('--action-noise', type=float, default=0.3, metavar='ε', help='Action noise')
 parser.add_argument('--episodes', type=int, default=3000, metavar='E', help='Total number of episodes')
 parser.add_argument('--seed-episodes', type=int, default=5, metavar='S', help='Seed episodes')
@@ -106,6 +106,28 @@ writer = SummaryWriter(summary_name.format(args.env, args.id))
 
 # Initialise training environment and experience replay memory
 env = Env(args.env, args.symbolic_env, args.seed, args.max_episode_length, args.action_repeat, args.bit_depth)
+# test_envs = Env(args.env, args.symbolic_env, args.seed, args.max_episode_length, args.action_repeat, args.bit_depth, args.test_episodes)
+# o0 = env.reset()
+# o1 = test_envs.reset()
+# while True:
+#   a0 = env.sample_random_action()
+#   a1 = test_envs.sample_random_action()
+#   o0, r0, d0 = env.step(a0)
+#   o1, r1, d1 = test_envs.step(a1)
+
+# test_envs = Env(args.env, args.symbolic_env, args.seed, args.max_episode_length, args.action_repeat, args.bit_depth, args.test_episodes)
+# pbar = trange(args.max_episode_length // args.action_repeat)
+# running = np.array([True for _ in range(args.test_episodes)])
+# total_rewards = np.array([0. for _ in range(args.test_episodes)])
+# for t in pbar:
+#   actions = test_envs.sample_random_action()
+#   observations, rewards, dones = test_envs.step(actions)
+#   valid_rewards = rewards * running
+#   total_rewards += valid_rewards
+#   running = running * (~dones)
+#   if running.sum().item() == 0:
+#     pbar.close()
+#     break
 
 if args.experience_replay is not '' and os.path.exists(args.experience_replay):
   D = torch.load(args.experience_replay)
@@ -202,16 +224,21 @@ if args.test:
   encoder.eval()
   with torch.no_grad():
     total_reward = 0
-    for _ in tqdm(range(args.test_episodes)):
+    for _ in trange(args.test_episodes):
       observation = env.reset()
       belief, posterior_state, action = torch.zeros(env.number_agents, args.belief_size, device=args.device), torch.zeros(env.number_agents, args.state_size, device=args.device), torch.zeros(env.number_agents, env.action_size, device=args.device)
-      pbar = tqdm(range(args.max_episode_length // args.action_repeat))
+      running = np.array([True for _ in range(args.test_episodes)])
+      total_rewards = np.array([0. for _ in range(args.test_episodes)])
+      pbar = trange(args.max_episode_length // args.action_repeat)
       for t in pbar:
         belief, posterior_state, action, observation, reward, done = update_belief_and_act(args, env, planner, transition_model, encoder, belief, posterior_state, action, observation.to(device=args.device))
-        total_reward += reward
+        valid_rewards = reward * running
+        total_rewards += valid_rewards
+        running = running * (~done)
+        total_reward += valid_rewards.sum()
         if args.render:
           env.render()
-        if done:
+        if running.sum().item() == 0:
           pbar.close()
           break
   print('Average Reward:', total_reward / args.test_episodes)
@@ -220,13 +247,13 @@ if args.test:
 
 
 # Training (and testing)
-for episode in tqdm(range(metrics['episodes'][-1] + 1, args.episodes + 1), total=args.episodes, initial=metrics['episodes'][-1] + 1):
+for episode in trange(metrics['episodes'][-1] + 1, args.episodes + 1, total=args.episodes, initial=metrics['episodes'][-1] + 1):
   # Model fitting
   losses = []
   model_modules = transition_model.modules+encoder.modules+observation_model.modules+reward_model.modules
 
   print("training loop")
-  for s in tqdm(range(args.collect_interval)):
+  for s in trange(args.collect_interval):
     # Draw sequence chunks {(o_t, a_t, r_t+1, terminal_t+1)} ~ D uniformly at random from the dataset (including terminal flags)
     observations, actions, rewards, nonterminals = D.sample(args.batch_size, args.chunk_size) # Transitions start at time t = 0
     # Create initial belief and state for time t = 0
@@ -442,19 +469,24 @@ for episode in tqdm(range(metrics['episodes'][-1] + 1, args.episodes + 1), total
   with torch.no_grad():
     observation, total_reward = env.reset(), 0
     belief, posterior_state, action = torch.zeros(env.number_agents, args.belief_size, device=args.device), torch.zeros(env.number_agents, args.state_size, device=args.device), torch.zeros(env.number_agents, env.action_size, device=args.device)
-    pbar = tqdm(range(args.max_episode_length // args.action_repeat))
+    running = np.array([True for _ in range(args.test_episodes)])
+    total_rewards = np.array([0. for _ in range(args.test_episodes)])
+    pbar = trange(args.max_episode_length // args.action_repeat)
     for t in pbar:
       # print("step",t)
       belief, posterior_state, action, next_observation, reward, done = update_belief_and_act(args, env, policy, transition_model, encoder, belief, posterior_state, action, observation.to(device=args.device), explore=True)
       D.append(observation, action.cpu(), reward, done)
-      total_reward += reward
+      valid_rewards = reward * running
+      total_rewards += valid_rewards
+      running = running * (~done)
+      total_reward += valid_rewards.sum()
       observation = next_observation
       if args.render:
         env.render()
-      if done:
+      if running.sum().item() == 0:
         pbar.close()
         break
-    
+
     # Update and plot train reward metrics
     metrics['steps'].append(t + metrics['steps'][-1])
     metrics['episodes'].append(episode)
@@ -483,19 +515,22 @@ for episode in tqdm(range(metrics['episodes'][-1] + 1, args.episodes + 1), total
         curious_actor_model.eval()
         curious_value_model.eval()
     # Initialise parallelised test environments
-    test_envs = EnvBatcher(Env, (args.env, args.symbolic_env, args.seed, args.max_episode_length, args.action_repeat, args.bit_depth), {}, args.test_episodes)
+    test_envs = Env(args.env, args.symbolic_env, args.seed, args.max_episode_length, args.action_repeat, args.bit_depth, args.test_episodes)
     
     with torch.no_grad():
       observation, total_rewards, video_frames = test_envs.reset(), np.zeros((args.test_episodes, )), []
       belief, posterior_state, action = torch.zeros(args.test_episodes, args.belief_size, device=args.device), torch.zeros(args.test_episodes, args.state_size, device=args.device), torch.zeros(args.test_episodes, env.action_size, device=args.device)
-      pbar = tqdm(range(args.max_episode_length // args.action_repeat))
+      running = np.array([True for _ in range(args.test_episodes)])
+      pbar = trange(args.max_episode_length // args.action_repeat)
       for t in pbar:
         belief, posterior_state, action, next_observation, reward, done = update_belief_and_act(args, test_envs, policy, transition_model, encoder, belief, posterior_state, action, observation.to(device=args.device))
-        total_rewards += reward.numpy()
+        valid_rewards = reward * running
+        total_rewards += valid_rewards
+        running = running * (~done)
         if not args.symbolic_env:  # Collect real vs. predicted frames for video
           video_frames.append(make_grid(torch.cat([observation, observation_model(belief, posterior_state).cpu()], dim=3) + 0.5, nrow=5).numpy())  # Decentre
         observation = next_observation
-        if done.sum().item() == args.test_episodes:
+        if running.sum().item() == 0:
           pbar.close()
           break
     

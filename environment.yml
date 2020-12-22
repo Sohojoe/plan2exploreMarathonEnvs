@@ -6,12 +6,17 @@ channels:
 dependencies:
   - plotly
   - pytorch
+  - cudatoolkit=10.2
   - torchvision
   - tqdm
-  - numpy
+  # - numpy
+  - setuptools
+  - pip
   - python=3.8
   - mkl
   - pip:
+    - colorama # needed for tqdm on windows
+    - numpy
     - gym
     - opencv-python
     - tensorboardx

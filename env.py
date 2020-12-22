@@ -24,15 +24,17 @@ def _images_to_observation(images, bit_depth):
   preprocess_observation_(images, bit_depth)  # Quantise, centre and dequantise inplace
   return images.unsqueeze(dim=0)  # Add batch dimension
 
-
+port_offset=0
 class WrappedMarathonEnv():
-  def __init__(self, env, symbolic, seed, max_episode_length, action_repeat, bit_depth):
+  def __init__(self, env, symbolic, seed, max_episode_length, action_repeat, bit_depth, n_envs=1):
     from marathon_envs.envs import MarathonEnvs
+    global port_offset
     # domain, task = env.split('-')
     self.symbolic = symbolic
     assert (symbolic), "symbolic should be True, all marathon envs are symbolic"
     # self._env = suite.load(domain_name=domain, task_name=task, task_kwargs={'random': seed})
-    self._env = MarathonEnvs(env, 1)
+    self._env = MarathonEnvs(env, n_envs, port_offset)
+    port_offset += 1
     if not symbolic:
       self._env = pixels.Wrapper(self._env)
     self.max_episode_length = max_episode_length
@@ -55,20 +57,21 @@ class WrappedMarathonEnv():
   def step(self, action):
     action = action.detach().numpy()
     # action = np.reshape(action, (1,-1))
-    reward = 0
-    for k in range(self.action_repeat):
-      observations, r, d, info = self._env.step(action)
-      reward += r
-      self.t += 1  # Increment internal timer
-      done = d or self.t == self.max_episode_length
-      if done:
-        break
+    # reward = [0 for _ in range(self.number_agents)]
+    # for k in range(self.action_repeat):
+    #   observations, r, d, info = self._env.step(action)
+    #   reward += r
+    #   self.t += 1  # Increment internal timer
+    #   done = d.any() or self.t == self.max_episode_length
+    #   if done:
+    #     break
+    observations, rewards, dones, info = self._env.step(action)
     if self.symbolic:
       # observations = np.concatenate(observations)
       observations = torch.tensor(observations)
     else:
       observations = _images_to_observation(self._env.physics.render(camera_id=0), self.bit_depth)
-    return observations, reward, done
+    return observations, rewards, dones
 
   def render(self):
     cv2.imshow('screen', self._env.physics.render(camera_id=0)[:, :, ::-1])
@@ -145,16 +148,24 @@ class GymEnv():
   def action_size(self):
     return self._env.action_space.shape[0]
 
+  @property 
+  def number_agents(self):
+    return 1
+
   # Sample an action randomly from a uniform distribution over all valid actions
   def sample_random_action(self):
     return torch.from_numpy(self._env.action_space.sample())
 
 
-def Env(env, symbolic, seed, max_episode_length, action_repeat, bit_depth):
+def Env(env, symbolic, seed, max_episode_length, action_repeat, bit_depth, n_envs=1):
   if env in GYM_ENVS:
-    return GymEnv(env, symbolic, seed, max_episode_length, action_repeat, bit_depth)
+    if n_envs==1:
+      return GymEnv(env, symbolic, seed, max_episode_length, action_repeat, bit_depth)
+    else: 
+      return EnvBatcher(env, (env, symbolic, seed, max_episode_length, action_repeat, bit_depth), {}, n_envs)
+
   elif env in MARATHON_ENVS:
-    return WrappedMarathonEnv(env, symbolic, seed, max_episode_length, action_repeat, bit_depth)
+    return WrappedMarathonEnv(env, symbolic, seed, max_episode_length, action_repeat, bit_depth, n_envs)
 
 # Wrapper for batching environments together
 class EnvBatcher():
