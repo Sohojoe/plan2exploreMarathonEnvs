@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 import torch
-
+from collections import deque
 from marathon_envs.envs import MarathonEnvs
 
 # GYM_ENVS = ['Pendulum-v0', 'MountainCarContinuous-v0', 'Ant-v2', 'HalfCheetah-v2', 'Hopper-v2', 'Humanoid-v2', 'HumanoidStandup-v2', 'InvertedDoublePendulum-v2', 'InvertedPendulum-v2', 'Reacher-v2', 'Swimmer-v2', 'Walker2d-v2']
@@ -25,16 +25,22 @@ def _images_to_observation(images, bit_depth):
   return images.unsqueeze(dim=0)  # Add batch dimension
 
 port_offset=0
+free_ports=[]
 class WrappedMarathonEnv():
   def __init__(self, env, symbolic, seed, max_episode_length, action_repeat, bit_depth, n_envs=1):
-    from marathon_envs.envs import MarathonEnvs
-    global port_offset
     # domain, task = env.split('-')
     self.symbolic = symbolic
     assert (symbolic), "symbolic should be True, all marathon envs are symbolic"
     # self._env = suite.load(domain_name=domain, task_name=task, task_kwargs={'random': seed})
-    self._env = MarathonEnvs(env, n_envs, port_offset)
-    port_offset += 1
+    
+    global port_offset, free_ports
+    if free_ports:
+      self._port = free_ports.pop()
+    else:
+      self._port = port_offset
+      port_offset += 1
+    
+    self._env = MarathonEnvs(env, n_envs, self._port)
     if not symbolic:
       self._env = pixels.Wrapper(self._env)
     self.max_episode_length = max_episode_length
@@ -80,6 +86,8 @@ class WrappedMarathonEnv():
   def close(self):
     cv2.destroyAllWindows()
     self._env.close()
+    global port_offset, free_ports
+    free_ports.append(self._port)
 
   @property
   def observation_size(self):
