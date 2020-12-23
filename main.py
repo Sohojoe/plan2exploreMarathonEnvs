@@ -259,16 +259,13 @@ for episode in trange(metrics['episodes'][-1] + 1, args.episodes + 1, total=args
     # Create initial belief and state for time t = 0
     init_belief, init_state = torch.zeros(args.batch_size, args.belief_size, device=args.device), torch.zeros(args.batch_size, args.state_size, device=args.device)
     # Update belief/state using posterior from previous belief/state, previous action and current observation (over entire sequence at once)
-    # beliefs, prior_states, prior_means, prior_std_devs, posterior_states, posterior_means, posterior_std_devs = transition_model(init_state, actions[:-1], init_belief, bottle(encoder, (observations[1:], )), nonterminals[:-1])
-    beliefs, prior_states, prior_means, prior_std_devs, posterior_states, posterior_means, posterior_std_devs = transition_model(init_state, actions, init_belief, bottle(encoder, (observations, )), nonterminals)
+    beliefs, prior_states, prior_means, prior_std_devs, posterior_states, posterior_means, posterior_std_devs = transition_model(init_state, actions[:-1], init_belief, bottle(encoder, (observations[1:], )), nonterminals[:-1])
     # Calculate observation likelihood, reward likelihood and KL losses (for t = 0 only for latent overshooting); sum over final dims, average over batch and time (original implementation, though paper seems to miss 1/T scaling?)
     if args.worldmodel_MSEloss:
-      # observation_loss = F.mse_loss(bottle(observation_model, (beliefs, posterior_states)), observations[1:], reduction='none').sum(dim=2 if args.symbolic_env else (2, 3, 4)).mean(dim=(0, 1))
-      observation_loss = F.mse_loss(bottle(observation_model, (beliefs, posterior_states)), observations, reduction='none').sum(dim=2 if args.symbolic_env else (2, 3, 4)).mean(dim=(0, 1))
+      observation_loss = F.mse_loss(bottle(observation_model, (beliefs, posterior_states)), observations[1:], reduction='none').sum(dim=2 if args.symbolic_env else (2, 3, 4)).mean(dim=(0, 1))
     else:
       observation_dist = Normal(bottle(observation_model, (beliefs, posterior_states)), 1)
-      # observation_loss = -observation_dist.log_prob(observations[1:]).sum(dim=2 if args.symbolic_env else (2, 3, 4)).mean(dim=(0, 1))
-      observation_loss = -observation_dist.log_prob(observations).sum(dim=2 if args.symbolic_env else (2, 3, 4)).mean(dim=(0, 1))
+      observation_loss = -observation_dist.log_prob(observations[1:]).sum(dim=2 if args.symbolic_env else (2, 3, 4)).mean(dim=(0, 1))
     if args.algo == "p2e":
       if args.zero_shot:
         reward_dist = Normal(bottle(reward_model, (beliefs.detach(), posterior_states)),1)
@@ -277,15 +274,12 @@ for episode in trange(metrics['episodes'][-1] + 1, args.episodes + 1, total=args
           reward_dist = Normal(bottle(reward_model, (beliefs, posterior_states)),1)
         else:
           reward_dist = Normal(bottle(reward_model, (beliefs.detach(), posterior_states)),1)
-      # reward_loss = -reward_dist.log_prob(rewards[:-1]).mean(dim=(0, 1))
-      reward_loss = -reward_dist.log_prob(rewards).mean(dim=(0, 1))
+      reward_loss = -reward_dist.log_prob(rewards[:-1]).mean(dim=(0, 1))
     else:
       if args.worldmodel_MSEloss:
-        # reward_loss = F.mse_loss(bottle(reward_model, (beliefs, posterior_states)), rewards[:-1], reduction='none').mean(dim=(0,1))
-        reward_loss = F.mse_loss(bottle(reward_model, (beliefs, posterior_states)), rewards, reduction='none').mean(dim=(0,1))
+        reward_loss = F.mse_loss(bottle(reward_model, (beliefs, posterior_states)), rewards[:-1], reduction='none').mean(dim=(0,1))
       else:
-        reward_dist = Normal(bottle(reward_model, (beliefs, posterior_states)),1)
-        # reward_loss = -reward_dist.log_prob(rewards[:-1]).mean(dim=(0, 1))
+        reward_loss = -reward_dist.log_prob(rewards[:-1]).mean(dim=(0, 1))
         reward_loss = -reward_dist.log_prob(rewards).mean(dim=(0, 1))
     # transition loss
     div = kl_divergence(Normal(posterior_means, posterior_std_devs), Normal(prior_means, prior_std_devs)).sum(dim=2)
@@ -334,7 +328,8 @@ for episode in trange(metrics['episodes'][-1] + 1, args.episodes + 1, total=args
       with FreezeParameters(model_modules):
         onestep_embed = bottle(encoder, (onestep_obs, ))
       bagging_size = args.batch_size
-      sample_with_replacement = torch.Tensor(args.onestep_num, bagging_size).uniform_(0,args.batch_size).type(torch.int64).to(device=args.device)
+      # sample_with_replacement = torch.Tensor(args.onestep_num, bagging_size).uniform_(0,args.batch_size).type(torch.int64).to(device=args.device)
+      sample_with_replacement = torch.Tensor(args.onestep_num, bagging_size).uniform_(0, onestep_beliefs.size(0)).type(torch.int64).to(device=args.device)
       for mdl in range(len(onestep_models)):
         action_indices = sample_with_replacement[mdl,:].reshape(onestep_batch_size, 1, 1).expand(onestep_batch_size, onestep_batch_size, action_feature_size)
         pred_indices = sample_with_replacement[mdl,:].reshape(onestep_batch_size, 1, 1).expand(onestep_batch_size, onestep_batch_size, obs_feature_size)
