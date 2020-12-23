@@ -29,13 +29,20 @@ parser.add_argument('--max-episode-length', type=int, default=1000, metavar='T',
 parser.add_argument('--experience-size', type=int, default=1000000, metavar='D', help='Experience replay size')  # Original implementation has an unlimited buffer size, but 1 million is the max experience collected anyway
 parser.add_argument('--cnn-activation-function', type=str, default='relu', choices=dir(F), help='Model activation function for a convolution layer')
 parser.add_argument('--dense-activation-function', type=str, default='elu', choices=dir(F), help='Model activation function a dense layer')
-parser.add_argument('--embedding-size', type=int, default=1024, metavar='E', help='Observation embedding size')  # Note that the default encoder for visual observations outputs a 1024D vector; for other embedding sizes an additional fully-connected layer is used
-parser.add_argument('--hidden-size', type=int, default=400, metavar='H', help='Hidden size')
-parser.add_argument('--belief-size', type=int, default=400, metavar='H', help='Belief/hidden size')
-parser.add_argument('--state-size', type=int, default=60, metavar='Z', help='State/latent size')
-parser.add_argument('--action-repeat', type=int, default=2, metavar='R', help='Action repeat')
+# parser.add_argument('--embedding-size', type=int, default=1024, metavar='E', help='Observation embedding size')  # Note that the default encoder for visual observations outputs a 1024D vector; for other embedding sizes an additional fully-connected layer is used
+# parser.add_argument('--hidden-size', type=int, default=400, metavar='H', help='Hidden size')
+# parser.add_argument('--belief-size', type=int, default=400, metavar='H', help='Belief/hidden size')
+# parser.add_argument('--state-size', type=int, default=60, metavar='Z', help='State/latent size')
+# parser.add_argument('--action-repeat', type=int, default=2, metavar='R', help='Action repeat')
+# parser.add_argument('--action-noise', type=float, default=0.3, metavar='ε', help='Action noise')
+# parser.add_argument('--episodes', type=int, default=3000, metavar='E', help='Total number of episodes')
+parser.add_argument('--embedding-size', type=int, default=512, metavar='E', help='Observation embedding size')  # Note that the default encoder for visual observations outputs a 1024D vector; for other embedding sizes an additional fully-connected layer is used
+parser.add_argument('--hidden-size', type=int, default=200, metavar='H', help='Hidden size')
+parser.add_argument('--belief-size', type=int, default=200, metavar='H', help='Belief/hidden size')
+parser.add_argument('--state-size', type=int, default=30, metavar='Z', help='State/latent size')
+parser.add_argument('--action-repeat', type=int, default=1, metavar='R', help='Action repeat')
 parser.add_argument('--action-noise', type=float, default=0.3, metavar='ε', help='Action noise')
-parser.add_argument('--episodes', type=int, default=3000, metavar='E', help='Total number of episodes')
+parser.add_argument('--episodes', type=int, default=1000, metavar='E', help='Total number of episodes')
 parser.add_argument('--seed-episodes', type=int, default=5, metavar='S', help='Seed episodes')
 parser.add_argument('--collect-interval', type=int, default=100, metavar='C', help='Collect interval')
 parser.add_argument('--batch-size', type=int, default=50, metavar='B', help='Batch size')
@@ -474,7 +481,7 @@ for episode in trange(metrics['episodes'][-1] + 1, args.episodes + 1, total=args
       valid_rewards = reward * running
       total_rewards += valid_rewards
       running = running * (~done)
-      total_reward += valid_rewards.sum()
+      total_reward += valid_rewards.sum().item()
       observation = next_observation
       if args.render:
         env.render()
@@ -490,8 +497,8 @@ for episode in trange(metrics['episodes'][-1] + 1, args.episodes + 1, total=args
 
 
   # Test model
-  print("Test model")
   if episode % args.test_interval == 0:
+    print("Test model")
     # PlaNet, Dreamer:       Uses the planner that is optimized along with the world model(World model trained with data from reward driven planner).
     # Plan2Explore zeroshot: Uses the planner that is optimized along with the world model(World model trained with data from curiousity driven planner).
     # Plan2Explore fewshot:  Uses the planner that will not be trained until reaches to adaptation_step. 
